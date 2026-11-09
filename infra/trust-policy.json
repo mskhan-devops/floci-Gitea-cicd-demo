@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "GiteaActionsMainBranchOnly",
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::000000000000:oidc-provider/localhost:3000/api/actions/oidc"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "localhost:3000/api/actions/oidc:aud": "sts.amazonaws.com",
+          "localhost:3000/api/actions/oidc:sub": "repo:mskhan@1/floci-cicd-demo@3:ref:refs/heads/main"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "commands": [
+    "set -eux",
+    "export DEBIAN_FRONTEND=noninteractive",
+    "for i in $(seq 1 60); do",
+    "  if apt-get update -qq; then break; fi",
+    "  sleep 5",
+    "done",
+    "for i in $(seq 1 60); do",
+    "  if apt-get install -y -qq docker.io curl >/dev/null; then break; fi",
+    "  sleep 5",
+    "done",
+    "command -v docker",
+    "command -v dockerd",
+    "grep -q 'dkr.ecr.us-east-1.localhost' /etc/hosts || echo '172.19.0.3 000000000000.dkr.ecr.us-east-1.localhost' >> /etc/hosts",
+    "mkdir -p /etc/docker",
+    "cat >/etc/docker/daemon.json <<'JSON'",
+    "{\"storage-driver\":\"vfs\",\"insecure-registries\":[\"172.19.0.0/16\",\"172.31.0.0/16\",\"localhost:4566\",\"127.0.0.1:4566\",\"000000000000.dkr.ecr.us-east-1.localhost:4566\"]}",
+    "JSON",
+    "if ! docker info >/dev/null 2>&1; then",
+    "  pkill -x dockerd || true",
+    "  sleep 2",
+    "  nohup dockerd --host=unix:///var/run/docker.sock >/var/log/dockerd.log 2>&1 &",
+    "fi",
+    "for i in $(seq 1 60); do docker info >/dev/null 2>&1 && break; sleep 2; done",
+    "docker info --format 'DOCKER_SERVER={{.ServerVersion}} DRIVER={{.Driver}}'",
+    "docker pull 000000000000.dkr.ecr.us-east-1.localhost:4566/floci-cicd-demo/app:latest",
+    "echo BOOTSTRAP_OK"
+  ]
+}

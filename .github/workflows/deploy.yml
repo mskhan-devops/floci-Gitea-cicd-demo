@@ -1,0 +1,254 @@
+name: Build, Push and Deploy
+
+on:
+  push:
+    branches: [main]
+
+# Gitea's built-in job token is used for the failure issue; the AWS access is
+# obtained exclusively through Gitea's native OIDC provider.
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: "000000000000"
+  AWS_ENDPOINT_URL: http://floci:4566
+  AWS_ENDPOINT_URL_STS: http://floci:4566
+  AWS_ROLE_ARN: arn:aws:iam::000000000000:role/floci-cicd-demo-github-actions
+  ECR_REPOSITORY: floci-cicd-demo/app
+  # The runner pushes through Floci's path-style ECR endpoint.
+  ECR_IMAGE: localhost:4566/000000000000/us-east-1/floci-cicd-demo/app
+  # EC2 pulls through Floci's virtual-hosted ECR endpoint, resolved via /etc/hosts.
+  EC2_IMAGE: 000000000000.dkr.ecr.us-east-1.localhost:4566/floci-cicd-demo/app
+  EC2_INSTANCE_ID: i-8760d08270b0ad114
+  CONTAINER_NAME: floci-cicd-demo
+
+jobs:
+  build-push-deploy:
+    name: Build, push to ECR and deploy with SSM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install AWS CLI v2
+        run: |
+          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+          unzip -q /tmp/awscliv2.zip -d /tmp
+          /tmp/aws/install --update
+          aws --version
+
+      - name: Assume the deployment role with Gitea OIDC
+        run: |
+          set -euo pipefail
+
+          # Gitea advertises the token endpoint with the browser-facing host
+          # (localhost:3000). Job containers reach Gitea as "gitea:3000".
+          TOKEN_URL="${ACTIONS_ID_TOKEN_REQUEST_URL/http:\/\/localhost:3000/http:\/\/gitea:3000}"
+          echo "Requesting OIDC token from: ${TOKEN_URL}"
+
+          RESPONSE=$(curl -fsS \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${TOKEN_URL}&audience=sts.amazonaws.com")
+          ID_TOKEN=$(jq -r '.value // empty' <<< "${RESPONSE}")
+          if [ -z "${ID_TOKEN}" ]; then
+            echo "::error::Gitea returned no OIDC ID token"
+            exit 1
+          fi
+
+          CREDS=$(aws sts assume-role-with-web-identity \
+            --role-arn "${AWS_ROLE_ARN}" \
+            --role-session-name "gitea-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT:-1}" \
+            --web-identity-token "${ID_TOKEN}" \
+            --duration-seconds 3600 \
+            --no-sign-request \
+            --endpoint-url "${AWS_ENDPOINT_URL}" \
+            --output json)
+
+          for key in AccessKeyId SecretAccessKey SessionToken; do
+            value=$(jq -r --arg key "$key" '.Credentials[$key]' <<< "${CREDS}")
+            echo "::add-mask::${value}"
+          done
+
+          {
+            echo "AWS_ACCESS_KEY_ID=$(jq -r '.Credentials.AccessKeyId' <<< "${CREDS}")"
+            echo "AWS_SECRET_ACCESS_KEY=$(jq -r '.Credentials.SecretAccessKey' <<< "${CREDS}")"
+            echo "AWS_SESSION_TOKEN=$(jq -r '.Credentials.SessionToken' <<< "${CREDS}")"
+          } >> "${GITHUB_ENV}"
+
+      - name: Verify assumed identity
+        run: aws sts get-caller-identity --output json
+
+      - name: Build and push image to ECR
+        run: |
+          set -euo pipefail
+
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin localhost:4566
+
+          docker build \
+            --tag "${ECR_IMAGE}:${GITHUB_SHA}" \
+            --tag "${ECR_IMAGE}:latest" \
+            .
+
+          docker push "${ECR_IMAGE}:${GITHUB_SHA}"
+          docker push "${ECR_IMAGE}:latest"
+
+      - name: Deploy on EC2 over SSM
+        run: |
+          set -euo pipefail
+
+          cat > /tmp/deploy-remote.sh <<REMOTE
+          set -eux
+          export DEBIAN_FRONTEND=noninteractive
+
+          # /etc/hosts maps the virtual-hosted ECR host to Floci on the bridge.
+          grep -q 'dkr.ecr.us-east-1.localhost' /etc/hosts || \
+            echo '172.19.0.3 000000000000.dkr.ecr.us-east-1.localhost' >> /etc/hosts
+
+          # Floci runs "EC2 instances" as unprivileged nested containers, where
+          # overlayfs cannot create whiteout files while extracting images.
+          # vfs is slower but works inside the emulator.
+          DAEMON_JSON=/etc/docker/daemon.json
+          if ! grep -q '"storage-driver": *"vfs"' "\${DAEMON_JSON}" 2>/dev/null; then
+            cat > "\${DAEMON_JSON}" <<JSON
+          {"storage-driver":"vfs","insecure-registries":["172.19.0.0/16","172.31.0.0/16","localhost:4566","127.0.0.1:4566","000000000000.dkr.ecr.us-east-1.localhost:4566"]}
+          JSON
+            if pgrep -x dockerd >/dev/null; then
+              pkill -x dockerd || true
+              sleep 3
+            fi
+            if [ -d /var/lib/docker ] && [ ! -d /var/lib/docker-overlay-backup ]; then
+              mv /var/lib/docker /var/lib/docker-overlay-backup
+            fi
+          fi
+
+          # Docker is pre-installed by bootstrap; start it if the instance rebooted.
+          if ! docker info >/dev/null 2>&1; then
+            nohup dockerd --host=unix:///var/run/docker.sock >/var/log/dockerd.log 2>&1 &
+            for i in \$(seq 1 60); do
+              docker info >/dev/null 2>&1 && break
+              sleep 2
+            done
+          fi
+          docker info >/dev/null
+
+          IMAGE="${EC2_IMAGE}:${GITHUB_SHA}"
+          docker pull "\${IMAGE}"
+
+          docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+          docker run -d \
+            --name "${CONTAINER_NAME}" \
+            --restart unless-stopped \
+            -p 8000:8000 \
+            -e APP_ENV=production \
+            -e APP_VERSION="${GITHUB_SHA}" \
+            -e DEPLOYED_AT="\$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            "\${IMAGE}"
+
+          for i in \$(seq 1 30); do
+            if docker exec "${CONTAINER_NAME}" curl -fsS http://127.0.0.1:8000/healthz >/dev/null; then
+              echo "DEPLOY_HEALTHY version=${GITHUB_SHA}"
+              curl -fsS http://127.0.0.1:8000/api/hello/
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Deployment did not become healthy" >&2
+          docker logs "${CONTAINER_NAME}" >&2 || true
+          exit 1
+          REMOTE
+
+          PARAMS_FILE=$(mktemp)
+          jq -n --rawfile script /tmp/deploy-remote.sh \
+            '{commands: ($script | split("\n"))}' > "${PARAMS_FILE}"
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${EC2_INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy ${GITHUB_SHA}" \
+            --timeout-seconds 600 \
+            --parameters "file://${PARAMS_FILE}" \
+            --query 'Command.CommandId' \
+            --output text)
+
+          echo "SSM command: ${COMMAND_ID}"
+
+          STATUS="Pending"
+          for i in $(seq 1 90); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "${COMMAND_ID}" \
+              --instance-id "${EC2_INSTANCE_ID}" \
+              --query 'Status' --output text 2>/dev/null || echo "InProgress")
+            case "${STATUS}" in
+              Success|Failed|Cancelled|TimedOut) break ;;
+            esac
+            sleep 5
+          done
+
+          aws ssm get-command-invocation \
+            --command-id "${COMMAND_ID}" \
+            --instance-id "${EC2_INSTANCE_ID}" \
+            --query '{Status:Status,StdOut:StandardOutputContent,StdErr:StandardErrorContent}' \
+            --output json
+
+          if [ "${STATUS}" != "Success" ]; then
+            echo "::error::SSM deployment finished with status ${STATUS}"
+            exit 1
+          fi
+
+  notify-failure:
+    name: Notify developer on failure
+    needs: build-push-deploy
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update a Gitea issue
+        env:
+          # Gitea reserves the GITEA_/GITHUB_ prefixes for secret names.
+          GITEA_TOKEN: ${{ secrets.ISSUE_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHORT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          API="http://gitea:3000/api/v1/repos/${REPO}"
+          TITLE="Deploy failed on main (${SHORT_SHA:0:7})"
+          BODY=$(jq -n \
+            --arg sha "${SHORT_SHA}" \
+            --arg run "${RUN_URL}" \
+            --arg actor "${GITHUB_ACTOR}" \
+            '{body: ("The deploy pipeline failed for commit `" + $sha + "` by @" + $actor + ".\n\nRun: " + $run)}')
+
+          EXISTING=$(curl -fsS \
+            -H "Authorization: token ${GITEA_TOKEN}" \
+            "${API}/issues?state=open&type=issues&limit=50" \
+            | jq -r --arg title "${TITLE}" '.[] | select(.title == $title) | .number' \
+            | head -n1)
+
+          if [ -n "${EXISTING}" ]; then
+            curl -fsS -X POST \
+              -H "Authorization: token ${GITEA_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "${BODY}" \
+              "${API}/issues/${EXISTING}/comments" >/dev/null
+            echo "Commented on existing issue #${EXISTING}"
+          else
+            PAYLOAD=$(jq -n \
+              --arg title "${TITLE}" \
+              --arg sha "${SHORT_SHA}" \
+              --arg run "${RUN_URL}" \
+              --arg actor "${GITHUB_ACTOR}" \
+              '{title: $title, body: ("The deploy pipeline failed for commit `" + $sha + "` by @" + $actor + ".\n\nRun: " + $run)}')
+            curl -fsS -X POST \
+              -H "Authorization: token ${GITEA_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "${PAYLOAD}" \
+              "${API}/issues" >/dev/null
+            echo "Opened a new failure issue"
+          fi

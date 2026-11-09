@@ -1,0 +1,253 @@
+:root {
+  color-scheme: dark;
+  font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: #070b16;
+  color: #e6edf7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.page {
+  position: relative;
+  min-height: 100vh;
+  padding: 64px 20px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.glow {
+  position: absolute;
+  width: 520px;
+  height: 520px;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.glow-a {
+  top: -180px;
+  left: -160px;
+  background: #1f6feb;
+}
+
+.glow-b {
+  bottom: -220px;
+  right: -140px;
+  background: #d946ef;
+}
+
+.card {
+  position: relative;
+  z-index: 1;
+  width: min(880px, 100%);
+  padding: 40px;
+  border-radius: 24px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: linear-gradient(160deg, rgba(17, 26, 46, 0.94), rgba(9, 14, 27, 0.96));
+  box-shadow:
+    0 40px 80px rgba(2, 6, 23, 0.65),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.badge {
+  display: inline-block;
+  padding: 7px 12px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #93c5fd;
+  border: 1px solid rgba(147, 197, 253, 0.35);
+  background: rgba(37, 99, 235, 0.12);
+  border-radius: 999px;
+}
+
+.hero h1 {
+  margin: 22px 0 14px;
+  font-size: clamp(30px, 5vw, 46px);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.hero h1 span {
+  background: linear-gradient(95deg, #60a5fa, #c084fc);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.subtitle {
+  margin: 0;
+  max-width: 680px;
+  color: #9fb0c9;
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.subtitle code {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.16);
+  color: #dbeafe;
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 26px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  font-size: 14px;
+  color: #bdcbe0;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #34d399;
+  box-shadow: 0 0 12px #34d399;
+}
+
+.dot-wait {
+  background: #fbbf24;
+  box-shadow: 0 0 12px #fbbf24;
+}
+
+.dot-error {
+  background: #f87171;
+  box-shadow: 0 0 12px #f87171;
+}
+
+.refresh {
+  margin-left: auto;
+  border: 1px solid rgba(147, 197, 253, 0.35);
+  background: rgba(37, 99, 235, 0.18);
+  color: #dbeafe;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.refresh:hover:not(:disabled) {
+  background: rgba(37, 99, 235, 0.34);
+}
+
+.refresh:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.message {
+  margin: 28px 0 18px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #f0f6ff;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid rgba(148, 163, 184, 0.13);
+}
+
+.stat-label {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #7f92ad;
+}
+
+.stat-value {
+  font-family: "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace;
+  font-size: 13px;
+  color: #dbeafe;
+  overflow-wrap: anywhere;
+}
+
+.stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.pill {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.pill span {
+  color: #7f92ad;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+
+.error {
+  margin-top: 26px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: rgba(127, 29, 29, 0.3);
+  border: 1px solid rgba(248, 113, 113, 0.35);
+  color: #fecaca;
+}
+
+.error p {
+  margin: 8px 0 0;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 13px;
+}
+
+.footer {
+  position: relative;
+  z-index: 1;
+  margin-top: 28px;
+  color: #64748b;
+  font-size: 12px;
+  text-align: center;
+  line-height: 1.8;
+}
+
+@media (max-width: 640px) {
+  .card {
+    padding: 26px 20px;
+  }
+
+  .page {
+    padding-top: 32px;
+  }
+}
